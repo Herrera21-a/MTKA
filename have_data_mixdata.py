@@ -29,7 +29,7 @@ from models import generator as gen
 from torchvision import utils
 
 
-def main(pathfile1):
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--gpu-id', default='0', type=int,
                         help='id(s) for CUDA_VISIBLE_DEVICES')
@@ -159,7 +159,6 @@ def main(pathfile1):
                 tot_cor += total_correct
                 tot_len += len(data_test_3)
                 if (i + 1) == 60:
-                    torch.save({'state_dict': model.state_dict()}, pathfile1)
                     Factory3_acc = float(total_correct) / len(data_test_3)
                     tot_acc = float(tot_cor) / tot_len
 
@@ -170,26 +169,10 @@ if __name__ == '__main__':
     cudnn.benchmark = True
     acc_notes = np.zeros([10, 4])
     dataset = 'hava_data_mixdata'
-    pathfile = "/remote-home/share/Renby/KD/" + dataset
-    if not os.path.exists(pathfile):
-        os.makedirs(pathfile)
-    start = time.time()
     for exp_num in range(10):
-        pathfile1 = pathfile + "/" + dataset + "_" + str(exp_num) + ".pth"
-        acc_notes[exp_num, :] = main(pathfile1)
-        print(acc_notes[exp_num, :])
+        acc_notes[exp_num, :] = main()
     df = pd.DataFrame(acc_notes, columns=["factory1_acc", "factory2_acc", "factory3_acc", "total_acc"])
     df.to_csv(f'{dataset}.csv')
 
-    end = time.time()
-    elapsed_time = end - start
-
-    # 转换为小时、分钟和秒
-    hours = int(elapsed_time // 3600)
-    minutes = int((elapsed_time % 3600) // 60)
-    seconds = int(elapsed_time % 60)
-
-    # 打印耗时
-    print(f"耗时：{hours}小时 {minutes}分钟 {seconds}秒")
 
 

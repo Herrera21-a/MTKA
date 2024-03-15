@@ -57,8 +57,6 @@ def main():
                         help='weight decay')
     parser.add_argument('--nesterov', action='store_true', default=True,
                         help='use nesterov momentum')
-    parser.add_argument('--method', type=str, default='cor + f',
-                        choices=['cor + f', 'cf_l2', 'eg_l2+'])
 
     opt = parser.parse_args()
     device = torch.device('cuda', opt.gpu_id)  # 多卡训练只要torch.device('cuda')就好了
@@ -68,11 +66,12 @@ def main():
     model = model.to(device)
 
     teacher1 = models.cnn13(num_classes=2)
-    teacher1.load_state_dict(torch.load("model_para/factory1.pth")["state_dict"])
+    teacher1.load_state_dict(torch.load("./data/fac_0.1/factory1.pth")["state_dict"])
     teacher2 = models.cnn13(num_classes=2)
-    teacher2.load_state_dict(torch.load("model_para/factory2.pth")["state_dict"])
+    teacher2.load_state_dict(torch.load("./data/fac_0.1/factory2.pth")["state_dict"])
     teacher3 = models.cnn13(num_classes=2)
-    teacher3.load_state_dict(torch.load("model_para/factory3.pth")["state_dict"])
+    teacher3.load_state_dict(torch.load("./data/fac_0.1/factory3.pth")["state_dict"])
+
 
     teacher1.to(device)
     teacher2.to(device)
@@ -98,7 +97,7 @@ def main():
     data_test_3 = polaroid.Polaroid(opt.data + "factory3", train=False, transform=transform_test)
     data_test_loader_3 = DataLoader(data_test_3, batch_size=50, num_workers=8)
 
-    opt.iteration = 2000 // 20
+    opt.iteration = 1000 // 20
     optimizer = optim.SGD(model.parameters(), lr=opt.lr, momentum=0.9, nesterov=opt.nesterov)
     # optimizer = optim.Adam(model.parameters(), lr=0.001)
     opt.total_steps = opt.n_epochs * opt.iteration * 1.1
@@ -133,82 +132,17 @@ def main():
             labels_1 = labels_1.to(device)
             labels_2 = labels_2.to(device)
             labels_3 = labels_3.to(device)
-            if opt.method == "cor + f":
-                target_1, feature_1 = teacher1(inputs_1, out_feature=True)
-                target_2, feature_2 = teacher2(inputs_2, out_feature=True)
-                target_3, feature_3 = teacher3(inputs_3, out_feature=True)
-                inputs = torch.cat([inputs_1, inputs_2, inputs_3], dim=0)
-                label = torch.cat([labels_1, labels_2, labels_3], dim=0)
-                feature_t = torch.cat([feature_1, feature_2, feature_3], dim=0)
-                logits, feature = model(inputs, out_feature=True)
-                loss_1 = F.cross_entropy(logits, label, reduction='mean')
-                loss_2 = loss_fn(feature, feature_t)
-                loss = loss_1 + loss_2
+            target_1, feature_1 = teacher1(inputs_1, out_feature=True)
+            target_2, feature_2 = teacher2(inputs_2, out_feature=True)
+            target_3, feature_3 = teacher3(inputs_3, out_feature=True)
+            inputs = torch.cat([inputs_1, inputs_2, inputs_3], dim=0)
+            label = torch.cat([labels_1, labels_2, labels_3], dim=0)
+            feature_t = torch.cat([feature_1, feature_2, feature_3], dim=0)
+            logits, feature = model(inputs, out_feature=True)
+            loss_1 = F.cross_entropy(logits, label, reduction='mean')
+            loss_2 = loss_fn(feature, feature_t)
+            loss = loss_1 + loss_2
 
-            elif opt.method == "cf_l2":
-                inputs = torch.cat([inputs_1, inputs_2, inputs_3], dim=0)
-                output_t1, feature_t1 = teacher1(inputs, out_feature=True)
-                output_t2, feature_t2 = teacher2(inputs, out_feature=True)
-                output_t3, feature_t3 = teacher3(inputs, out_feature=True)
-                weight_1 = loss2weight(output_t1[0:20, :].clone(), output_t2[0:20, :].clone(),
-                                       output_t3[0:20, :].clone(), labels_1)
-                weight_2 = loss2weight(output_t1[20:40, :].clone(), output_t2[20:40, :].clone(),
-                                       output_t3[20:40, :].clone(), labels_2)
-                weight_3 = loss2weight(output_t1[40:60, :].clone(), output_t2[40:60, :].clone(),
-                                       output_t3[40:60, :].clone(), labels_3)
-                feature1_all = [feature_t1[0:20, :], feature_t2[0:20, :], feature_t3[0:20, :]]
-                feature2_all = [feature_t1[20:40, :], feature_t2[20:40, :], feature_t3[20:40, :]]
-                feature3_all = [feature_t1[40:60, :], feature_t2[40:60, :], feature_t3[40:60, :]]
-                feature1_index = torch.min(weight_1, 0)[1]
-                feature2_index = torch.min(weight_2, 0)[1]
-                feature3_index = torch.min(weight_3, 0)[1]
-                feature_t = torch.cat([feature1_all[feature1_index], feature2_all[feature2_index],
-                                       feature3_all[feature3_index]], dim=0)
-
-                label = torch.cat([labels_1, labels_2, labels_3], dim=0)
-
-                logits, feature_s = model(inputs, out_feature=True)
-                loss_1 = F.cross_entropy(logits, label, reduction='mean')
-                loss_2 = loss_fn(feature_s, feature_t)
-                loss = loss_1 + loss_2
-
-            elif opt.method == "eg_l2+":
-                inputs = torch.cat([inputs_1, inputs_2, inputs_3], dim=0)
-                output_t1, feature_t1 = teacher1(inputs, out_feature=True)
-                output_t2, feature_t2 = teacher2(inputs, out_feature=True)
-                output_t3, feature_t3 = teacher3(inputs, out_feature=True)
-                logits, feature_s = model(inputs, out_feature=True)
-                tmp_model = model.distill_seq().to(opt.device)
-                output_f1ons = tmp_model[-1](feature_t1.clone())
-                output_f2ons = tmp_model[-1](feature_t2.clone())
-                output_f3ons = tmp_model[-1](feature_t3.clone())
-
-                acc1_1 = accuracy(output_f1ons[0:20, :].clone(), labels_1, topk=(1,))[0]
-                acc1_2 = accuracy(output_f2ons[0:20, :].clone(), labels_1, topk=(1,))[0]
-                acc1_3 = accuracy(output_f3ons[0:20, :].clone(), labels_1, topk=(1,))[0]
-                acc2_1 = accuracy(output_f1ons[20:40, :].clone(), labels_2, topk=(1,))[0]
-                acc2_2 = accuracy(output_f2ons[20:40, :].clone(), labels_2, topk=(1,))[0]
-                acc2_3 = accuracy(output_f3ons[20:40, :].clone(), labels_2, topk=(1,))[0]
-                acc3_1 = accuracy(output_f1ons[40:60, :].clone(), labels_3, topk=(1,))[0]
-                acc3_2 = accuracy(output_f2ons[40:60, :].clone(), labels_3, topk=(1,))[0]
-                acc3_3 = accuracy(output_f3ons[40:60, :].clone(), labels_3, topk=(1,))[0]
-                weight_1 = [acc1_1, acc1_2, acc1_3]
-                weight_2 = [acc2_1, acc2_2, acc2_3]
-                weight_3 = [acc3_1, acc3_2, acc3_3]
-                feature1_index = weight_1.index(max(weight_1))
-                feature2_index = weight_2.index(max(weight_2))
-                feature3_index = weight_3.index(max(weight_3))
-
-                feature1_all = [feature_t1[0:20, :], feature_t2[0:20, :], feature_t3[0:20, :]]
-                feature2_all = [feature_t1[20:40, :], feature_t2[20:40, :], feature_t3[20:40, :]]
-                feature3_all = [feature_t1[40:60, :], feature_t2[40:60, :], feature_t3[40:60, :]]
-                feature_t = torch.cat([feature1_all[feature1_index], feature2_all[feature2_index],
-                                       feature3_all[feature3_index]], dim=0)
-
-                label = torch.cat([labels_1, labels_2, labels_3], dim=0)
-                loss_1 = F.cross_entropy(logits, label, reduction='mean')
-                loss_2 = loss_fn(feature_s, feature_t)
-                loss = loss_1 + loss_2
             loss.backward()
             optimizer.step()
             scheduler.step()
@@ -288,7 +222,7 @@ def main():
                 precision = 100 * TP / (TP + FP)
                 recall = 100 * TP / (TP + FN)
                 print('precision : %f, recall : %f' % (precision, recall))
-                torch.save({'state_dict': model.state_dict()}, str(i) + "ep_STU.pth")
+
 
 
     return Factory1_acc, Factory2_acc, Factory3_acc, tot_acc
@@ -296,14 +230,13 @@ def main():
 
 if __name__ == '__main__':
     cudnn.benchmark = True
-    main()
     acc_notes = np.zeros([10, 4])
-    dataset = 'have_data_all_method' + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     for exp_num in range(10):
         acc_notes[exp_num, :] = main()
         print(acc_notes[exp_num, :])
     df = pd.DataFrame(acc_notes, columns=["factory1_acc", "factory2_acc", "factory3_acc", "total_acc"])
     df.to_csv(f'{dataset}.csv')
+
 
 
 
